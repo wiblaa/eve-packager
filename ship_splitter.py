@@ -47,36 +47,44 @@ except Exception as e:
     st.error("❌ Could not parse TSV input.")
     st.stop()
 
-# Expand large stacks (split those with total value > 5B ISK)
+# 💥 Split stacks with total value > 5B ISK
 MAX_STACK_VALUE = 5_000_000_000
 expanded_rows = []
 
 for _, row in df.iterrows():
-    count = row["Count"]
-    value = row["Value"]
-    volume = row["Volume"]
+    count = int(row["Count"])
+    value = float(row["Value"])
+    volume = float(row["Volume"])
+    ship_type = row["Type"]
+
     max_units = MAX_STACK_VALUE // value
 
     if count * value > MAX_STACK_VALUE and max_units > 0:
         while count > max_units:
             expanded_rows.append({
-                "Type": row["Type"],
-                "Count": max_units,
+                "Type": ship_type,
+                "Count": int(max_units),
                 "Volume": volume,
                 "Value": value
             })
             count -= max_units
         if count > 0:
             expanded_rows.append({
-                "Type": row["Type"],
-                "Count": count,
+                "Type": ship_type,
+                "Count": int(count),
                 "Volume": volume,
                 "Value": value
             })
     else:
-        expanded_rows.append(row)
+        expanded_rows.append({
+            "Type": ship_type,
+            "Count": count,
+            "Volume": volume,
+            "Value": value
+        })
 
 df = pd.DataFrame(expanded_rows)
+
 
 
 # Derived columns
