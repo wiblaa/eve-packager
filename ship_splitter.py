@@ -3,10 +3,11 @@ import pandas as pd
 import math
 from io import StringIO
 
+st.set_page_config(layout="wide")
 st.title("🚀 EVE Online Ship Splitter")
-st.write("Split your ship inventory into balanced packages based on volume and ISK value.")
+st.write("Split your ship inventory into balanced packages based on volume, with a hard limit and minimal waste.")
 
-# 📦 Volume limit per package (user-configurable)
+# 📦 Volume limit per package
 volume_limit = st.number_input(
     "📦 Max Volume per Package (m³)",
     min_value=100_000,
@@ -15,7 +16,7 @@ volume_limit = st.number_input(
     step=50_000
 )
 
-# 📋 Tab-separated ship list input
+# 📋 Input area for TSV
 default_data = """Type\tCount\tVolume\tValue
 Rook\t16\t10000\t3720706652
 Vulture\t8\t15000\t3695534158
@@ -39,7 +40,7 @@ tsv_input = st.text_area(
     height=300
 )
 
-# Load and validate input
+# 📥 Parse and validate input
 try:
     df = pd.read_csv(StringIO(tsv_input), sep="\t")
     assert {"Type", "Count", "Volume", "Value"}.issubset(df.columns)
@@ -47,7 +48,7 @@ except Exception as e:
     st.error("❌ Could not parse TSV input.")
     st.stop()
 
-# 💥 Split stacks with total value > 5B ISK
+# 🔪 Split stacks by ISK value (5B) and volume limit (volume_limit)
 MAX_STACK_VALUE = 5_000_000_000
 expanded_rows = []
 
@@ -56,25 +57,21 @@ for _, row in df.iterrows():
     value = float(row["Value"])
     volume = float(row["Volume"])
     ship_type = row["Type"]
-    max_units = MAX_STACK_VALUE // value
 
-    if count * value > MAX_STACK_VALUE and max_units > 0:
-        while count > max_units:
-            expanded_rows.append({
-                "Type": ship_type,
-                "Count": int(max_units),
-                "Volume": volume,
-                "Value": value
-            })
-            count -= max_units
-        if count > 0:
-            expanded_rows.append({
-                "Type": ship_type,
-                "Count": int(count),
-                "Volume": volume,
-                "Value": value
-            })
-    else:
+    max_units_by_value = MAX_STACK_VALUE // value if value > 0 else count
+    max_units_by_volume = volume_limit // volume if volume > 0 else count
+    chunk_size = int(min(max_units_by_value or count, max_units_by_volume or count))
+
+    while count > chunk_size:
+        expanded_rows.append({
+            "Type": ship_type,
+            "Count": chunk_size,
+            "Volume": volume,
+            "Value": value
+        })
+        count -= chunk_size
+
+    if count > 0:
         expanded_rows.append({
             "Type": ship_type,
             "Count": count,
@@ -84,10 +81,9 @@ for _, row in df.iterrows():
 
 df = pd.DataFrame(expanded_rows)
 
-# Derived columns
+# 📊 Derived columns
 df["TotalVolume"] = df["Volume"] * df["Count"]
 df["TotalValue"] = df["Value"] * df["Count"]
-
 total_volume = df["TotalVolume"].sum()
 total_value = df["TotalValue"].sum()
 estimated_packages = math.ceil(total_volume / volume_limit)
@@ -96,7 +92,7 @@ st.markdown(f"📦 **Estimated Packages Needed**: {estimated_packages}")
 st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
-# 🧠 Apply First-Fit Decreasing algorithm
+# 📦 FFD: sort by decreasing volume
 items = df.sort_values(by="TotalVolume", ascending=False).to_dict(orient="records")
 packages = []
 
@@ -117,7 +113,7 @@ for item in items:
             'total_volume': item['TotalVolume']
         })
 
-# 📊 Display results in two columns
+# 🪟 Show results in columns
 left_col, right_col = st.columns([3, 2])
 
 with left_col:
