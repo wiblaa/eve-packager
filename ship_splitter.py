@@ -113,7 +113,7 @@ st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
 # 📦 Multi-objective bin packing: prefer tight volume fit + value balancing
-def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-12):
+def pack_items_multi_objective(df_expanded, volume_limit, alpha=alpha, beta=beta):
     """
     Multi-objective heuristic packing:
     - alpha: weight for remaining volume (prefer tighter volume fit)
