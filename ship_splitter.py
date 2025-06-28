@@ -18,7 +18,13 @@ volume_limit = st.sidebar.number_input(
     value=350_000,
     step=50_000
 )
-
+max_package_value = st.sidebar.number_input(
+    "💰 Max ISK Value per Package",
+    min_value=0,
+    value=0,  # 0 means no limit
+    step=100_000_000,
+    format="%d"
+)
 # Heuristic weight sliders (0.0 to 1.0), internally scaled
 alpha_ui = st.sidebar.slider("📦 Volume Fit Weight (α)", 0.0, 1.0, 1.0, 0.05)
 beta_ui = st.sidebar.slider("💰 Value Balance Weight (β)", 0.0, 1.0, 0.2, 0.01)
@@ -113,7 +119,7 @@ st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
 # 📦 Multi-objective bin packing: prefer tight volume fit + value balancing
-def pack_items_multi_objective(df_expanded, volume_limit, alpha=alpha, beta=beta):
+def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-9, max_package_value=0):
     """
     Multi-objective heuristic packing:
     - alpha: weight for remaining volume (prefer tighter volume fit)
@@ -129,6 +135,9 @@ def pack_items_multi_objective(df_expanded, volume_limit, alpha=alpha, beta=beta
         for i, pkg in enumerate(packages):
             space_left = volume_limit - pkg['total_volume']
             if space_left >= item['TotalVolume']:
+                if max_package_value > 0 and pkg['total_value'] + item['TotalValue'] > max_package_value:
+                    continue  # Skip: would exceed ISK limit
+
                 score = alpha * space_left + beta * pkg['total_value']
                 if score < best_score:
                     best_fit_idx = i
@@ -152,8 +161,13 @@ def pack_items_multi_objective(df_expanded, volume_limit, alpha=alpha, beta=beta
 df["ValueDensity"] = df["Value"] / df["Volume"]
 
 # 📦 Run the multi-objective packer
-packages = pack_items_multi_objective(df, volume_limit, alpha=alpha, beta=beta)
-
+packages = pack_items_multi_objective(
+    df,
+    volume_limit,
+    alpha=alpha,
+    beta=beta,
+    max_package_value=max_package_value
+)
 # Consolidation function to group same ship types in a package
 def consolidate_package(package):
     df_pkg = pd.DataFrame(package['types'])
