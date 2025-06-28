@@ -5,7 +5,7 @@ from io import StringIO
 from collections import defaultdict
 
 st.set_page_config(layout="wide")
-st.title("🚀 Ship Splitter with Soft Stack Split Limit")
+st.title("🚀 EVE Ship Courier Contract splitter")
 
 # --- Configurable inputs ---
 volume_limit = st.number_input("📦 Max Volume per Package (m³)", 100_000, 1_250_000, 350_000, 50_000)
