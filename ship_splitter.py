@@ -19,23 +19,17 @@ volume_limit = st.sidebar.number_input(
     step=50_000
 )
 
-# 🧠 Value balance weight (beta): how much to prefer ISK balancing
-value_weight = st.sidebar.slider(
-    "💰 Value Balance Preference (beta)",
-    min_value=0.0,
-    max_value=0.000001,
-    value=0.000000001,
-    step=0.0000000001,
-    format="%.10f"
-)
+# Heuristic weight sliders (0.0 to 1.0), internally scaled
+alpha_ui = st.sidebar.slider("📦 Volume Fit Weight (α)", 0.0, 1.0, 1.0, 0.05)
+beta_ui = st.sidebar.slider("💰 Value Balance Weight (β)", 0.0, 1.0, 0.2, 0.01)
 
-# 🔪 Max number of stack splits allowed
-max_splits = st.sidebar.slider(
-    "🔪 Max Stack Splits",
-    min_value=1,
-    max_value=10,
-    value=3
-)
+# Convert to actual internal weights
+alpha = alpha_ui
+beta = beta_ui * 1e-8  # scale β so it’s meaningful vs α
+
+# Max stack splits
+max_splits = st.sidebar.slider("🔪 Max Stack Splits", 1, 10, 3)
+
 
 # 📋 Input area for TSV
 default_data = """Type\tCount\tVolume\tValue
@@ -158,7 +152,7 @@ def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-12)
 df["ValueDensity"] = df["Value"] / df["Volume"]
 
 # 📦 Run the multi-objective packer
-packages = pack_items_multi_objective(df, volume_limit, alpha=1.0, beta=value_weight)
+packages = pack_items_multi_objective(df, volume_limit, alpha=alpha, beta=beta)
 
 # Consolidation function to group same ship types in a package
 def consolidate_package(package):
