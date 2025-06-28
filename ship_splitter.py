@@ -80,19 +80,21 @@ for _, row in df.iterrows():
     volume = float(row["Volume"])
     ship_type = row["Type"]
 
-    max_units_by_value = MAX_STACK_VALUE // value if value > 0 else count
+    max_units_by_value_stack = MAX_STACK_VALUE // value if value > 0 else count
     max_units_by_volume = volume_limit // volume if volume > 0 else count
 
-    # Max chunk size by constraints
-    chunk_size_limit = int(min(max_units_by_value or count, max_units_by_volume or count))
+    max_units_by_value_pkg = count  # default no limit
 
-    # Calculate needed splits
+    # If max_package_value set, calculate max units per chunk by ISK limit
+    if max_package_value > 0:
+        max_units_by_value_pkg = max_package_value // value if value > 0 else count
+
+    # Determine the chunk size limit combining all constraints
+    chunk_size_limit = int(min(max_units_by_value_stack or count, max_units_by_volume or count, max_units_by_value_pkg or count))
+
     needed_splits = math.ceil(count / chunk_size_limit) if chunk_size_limit > 0 else 1
-
-    # Limit to max 3 splits
     splits = min(needed_splits, MAX_SPLITS)
 
-    # Evenly distribute counts
     base_chunk_size = count // splits
     remainder = count % splits
 
