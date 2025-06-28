@@ -128,4 +128,23 @@ summary_rows = []
 for i, package in enumerate(packages, 1):
     st.subheader(f"📦 Package {i}")
     st.write(f"**Total Volume**: {package['total_volume']:,} m³")
-    st.write
+    st.write(f"**Total Value**: {package['total_value']:,} ISK")
+    contents_df = pd.DataFrame(package['types'])
+    st.dataframe(contents_df)
+
+    summary_rows.append({
+        "Package": f"Package {i}",
+        "Total Volume (m³)": package['total_volume'],
+        "Total Value (ISK)": package['total_value'],
+        "Ship Types": len(contents_df),
+        "Total Ships": contents_df["Count"].sum()
+    })
+
+# Summary view
+st.markdown("---")
+st.subheader("📊 Summary View")
+summary_df = pd.DataFrame(summary_rows)
+st.dataframe(summary_df.style.format({
+    "Total Volume (m³)": "{:,.0f}",
+    "Total Value (ISK)": "{:,.0f}"
+}))
