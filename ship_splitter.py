@@ -20,62 +20,76 @@ except:
     st.error("Invalid TSV format. Please include Type, Count, Volume, Value.")
     st.stop()
 
-# --- Split Rows (unlimited splits) ---
+# --- Split Rows (force no single stack > value_limit / 2) ---
 rows = []
 for _, r in df.iterrows():
-    count, vpc, ipc = int(r.Count), float(r.Volume), float(r.Value)
-    max_units_vol = volume_limit // vpc
-    max_units_val = value_limit // ipc if value_limit>0 else max_units_vol
-    chunk = int(min(max_units_vol or count, max_units_val or count))
-    chunk = max(chunk, 1)
-    for i in range(math.ceil(count / chunk)):
-        n = chunk if i < math.ceil(count/chunk)-1 else count - chunk*(math.ceil(count/chunk)-1)
+    count = int(r["Count"])
+    unit_vol = float(r["Volume"])
+    unit_val = float(r["Value"])
+    max_val_per_stack = value_limit / 2 if value_limit > 0 else float("inf")
+
+    # max units per stack due to ISK limit (hard cap per stack)
+    max_units_by_isk = math.floor(max_val_per_stack / unit_val)
+    max_units_by_vol = math.floor(volume_limit / unit_vol)
+
+    chunk_size = max(1, min(max_units_by_isk, max_units_by_vol))
+
+    for i in range(math.ceil(count / chunk_size)):
+        actual_count = chunk_size if i < math.ceil(count / chunk_size) - 1 else count - chunk_size * (math.ceil(count / chunk_size) - 1)
         rows.append({
-            "Type": r.Type, "Count":n,
-            "TotalVolume": n * vpc,
-            "TotalValue": n * ipc
+            "Type": r["Type"],
+            "Count": actual_count,
+            "TotalVolume": actual_count * unit_vol,
+            "TotalValue": actual_count * unit_val
         })
 
 # --- MFFD Packing ---
 rows.sort(key=lambda x: -x["TotalVolume"])
 bins = []
+
 for item in rows:
-    # If item > half capacity → new bin
     if item["TotalVolume"] > volume_limit * 0.5:
-        bins.append([item]); continue
+        bins.append([item])
+        continue
 
     placed = False
     for b in bins:
         used_vol = sum(i["TotalVolume"] for i in b)
         used_val = sum(i["TotalValue"] for i in b)
+
         if used_vol + item["TotalVolume"] <= volume_limit and (value_limit == 0 or used_val + item["TotalValue"] <= value_limit):
-            b.append(item); placed = True; break
+            b.append(item)
+            placed = True
+            break
 
     if not placed:
         bins.append([item])
 
-# --- Consolidate and Display ---
+# --- Consolidation ---
 def consolidate(bin_items):
     dfp = pd.DataFrame(bin_items)
-    g = dfp.groupby("Type").agg({"Count": "sum", "TotalVolume": "sum", "TotalValue":"sum"}).reset_index()
-    return g
+    grouped = dfp.groupby("Type").agg({"Count": "sum", "TotalVolume": "sum", "TotalValue": "sum"}).reset_index()
+    return grouped
 
-cols = st.columns([3,2])
+# --- Display ---
+cols = st.columns([3, 2])
+
 with cols[0]:
-    for i, b in enumerate(bins,1):
-        s = consolidate(b)
-        st.subheader(f"📦 Package {i} — Vol: {s.TotalVolume.sum():,} / {volume_limit:,}  |  ISK: {s.TotalValue.sum():,}")
-        st.dataframe(s)
+    for i, b in enumerate(bins, 1):
+        consolidated = consolidate(b)
+        st.subheader(f"📦 Package {i} — Vol: {consolidated.TotalVolume.sum():,} / {volume_limit:,} | ISK: {consolidated.TotalValue.sum():,}")
+        st.dataframe(consolidated)
 
 with cols[1]:
+    st.subheader("📊 Summary")
     summary = []
-    for i, b in enumerate(bins,1):
+    for i, b in enumerate(bins, 1):
         s = consolidate(b)
         summary.append({
             "Package": i,
             "Volume": s.TotalVolume.sum(),
             "Value": s.TotalValue.sum(),
-            "Types": len(s),
-            "Ships": s.Count.sum()
+            "Ship Types": len(s),
+            "Total Ships": s["Count"].sum()
         })
-    st.dataframe(pd.DataFrame(summary).style.format({"Volume":"{:,}", "Value":"{:,}"}), use_container_width=True)
+    st.dataframe(pd.DataFrame(summary).style.format({"Volume": "{:,.0f}", "Value": "{:,.0f}"}), use_container_width=True)
