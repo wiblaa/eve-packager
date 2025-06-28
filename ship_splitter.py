@@ -5,39 +5,52 @@ from io import StringIO
 
 st.set_page_config(layout="wide")
 st.title("🚀 EVE Online Ship Splitter")
-st.write("Split your ship inventory into balanced packages based on volume, with limited stack splitting and consolidated output.")
+st.write("Split your ship inventory into balanced packages based on volume and value, with limited stack splitting and local improvement steps.")
 
-# 🎛️ Sidebar configuration
-st.sidebar.header("⚙️ Packing Settings")
-
-# Max volume per package (already in main area, optional to move here)
-volume_limit = st.sidebar.number_input(
+# --- User inputs ---
+volume_limit = st.number_input(
     "📦 Max Volume per Package (m³)",
     min_value=100_000,
     max_value=1_250_000,
     value=350_000,
     step=50_000
 )
+
 max_package_value = st.number_input(
     "💰 Max Value per Package (ISK, 0 for no limit)",
     min_value=0,
-    max_value=100_000_000_000,
+    max_value=50_000_000_000,
     value=10_000_000_000,
-    step=100_000_000
+    step=500_000_000
 )
-# Heuristic weight sliders (0.0 to 1.0), internally scaled
-alpha_ui = st.sidebar.slider("📦 Volume Fit Weight (α)", 0.0, 1.0, 1.0, 0.05)
-beta_ui = st.sidebar.slider("💰 Value Balance Weight (β)", 0.0, 1.0, 0.2, 0.01)
 
-# Convert to actual internal weights
-alpha = alpha_ui
-beta = beta_ui * 1e-8  # scale β so it’s meaningful vs α
+max_splits = st.slider(
+    "🔪 Max Stack Splits",
+    min_value=1,
+    max_value=10,
+    value=4,
+    step=1
+)
 
-# Max stack splits
-max_splits = st.sidebar.slider("🔪 Max Stack Splits", 1, 10, 3)
+alpha = st.slider(
+    "⚖️ Alpha (value weight)",
+    min_value=0.1,
+    max_value=5.0,
+    value=1.0,
+    step=0.01,
+    help="Weight for value when sorting and packing."
+)
 
+beta = st.slider(
+    "⚖️ Beta (volume weight)",
+    min_value=0.1,
+    max_value=5.0,
+    value=0.29,
+    step=0.01,
+    help="Weight for volume when sorting and packing."
+)
 
-# 📋 Input area for TSV
+# --- Default input data ---
 default_data = """Type\tCount\tVolume\tValue
 Rook\t16\t10000\t3720706652
 Vulture\t8\t15000\t3695534158
@@ -61,17 +74,15 @@ tsv_input = st.text_area(
     height=300
 )
 
-# 📥 Parse and validate input
+# --- Parse input ---
 try:
     df = pd.read_csv(StringIO(tsv_input), sep="\t")
     assert {"Type", "Count", "Volume", "Value"}.issubset(df.columns)
-except Exception as e:
-    st.error("❌ Could not parse TSV input.")
+except Exception:
+    st.error("❌ Could not parse TSV input. Ensure columns: Type, Count, Volume, Value")
     st.stop()
 
-# 💥 Split stacks with max 3 splits, respecting volume & value limits
-MAX_SPLITS = max_splits
-MAX_STACK_VALUE = 5_000_000_000
+# --- Expand stacks with limited splitting ---
 expanded_rows = []
 
 for _, row in df.iterrows():
@@ -80,20 +91,16 @@ for _, row in df.iterrows():
     volume = float(row["Volume"])
     ship_type = row["Type"]
 
-    max_units_by_value_stack = MAX_STACK_VALUE // value if value > 0 else count
+    # Calculate max units per chunk by volume and value constraints
+    max_units_by_value = max_package_value // value if value > 0 and max_package_value > 0 else count
     max_units_by_volume = volume_limit // volume if volume > 0 else count
+    chunk_size_limit = int(min(max_units_by_value or count, max_units_by_volume or count))
 
-    max_units_by_value_pkg = count  # default no limit
+    # Ensure chunk_size_limit is at least 1
+    chunk_size_limit = max(chunk_size_limit, 1)
 
-    # If max_package_value set, calculate max units per chunk by ISK limit
-    if max_package_value > 0:
-        max_units_by_value_pkg = max_package_value // value if value > 0 else count
-
-    # Determine the chunk size limit combining all constraints
-    chunk_size_limit = int(min(max_units_by_value_stack or count, max_units_by_volume or count, max_units_by_value_pkg or count))
-
-    needed_splits = math.ceil(count / chunk_size_limit) if chunk_size_limit > 0 else 1
-    splits = min(needed_splits, MAX_SPLITS)
+    needed_splits = math.ceil(count / chunk_size_limit)
+    splits = min(needed_splits, max_splits)
 
     base_chunk_size = count // splits
     remainder = count % splits
@@ -104,86 +111,150 @@ for _, row in df.iterrows():
             "Type": ship_type,
             "Count": current_chunk,
             "Volume": volume,
-            "Value": value
+            "Value": value,
+            "TotalVolume": current_chunk * volume,
+            "TotalValue": current_chunk * value
         })
 
-df = pd.DataFrame(expanded_rows)
+df_expanded = pd.DataFrame(expanded_rows)
 
-# 📊 Derived columns
-df["TotalVolume"] = df["Volume"] * df["Count"]
-df["TotalValue"] = df["Value"] * df["Count"]
-total_volume = df["TotalVolume"].sum()
-total_value = df["TotalValue"].sum()
-estimated_packages = math.ceil(total_volume / volume_limit)
+# --- Sorting heuristic combining alpha and beta weights ---
+df_expanded['Score'] = alpha * df_expanded['TotalValue'] / (df_expanded['TotalVolume'] + 1) + beta * df_expanded['TotalVolume']
 
-st.markdown(f"📦 **Estimated Packages Needed**: {estimated_packages}")
-st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
-st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
+items = df_expanded.sort_values(by='Score', ascending=False).to_dict(orient='records')
 
-# 📦 Multi-objective bin packing: prefer tight volume fit + value balancing
-def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-9, max_package_value=0):
-    """
-    Multi-objective heuristic packing:
-    - alpha: weight for remaining volume (prefer tighter volume fit)
-    - beta: weight for value balancing (prefer lower total ISK value)
-    """
-    items = df_expanded.sort_values(by="ValueDensity", ascending=False).to_dict(orient="records")
-    packages = []
+# --- Packing using First-Fit Decreasing (FFD) ---
+packages = []
 
 for item in items:
-    best_pkg_idx = None
-    best_score = None
-
-    for i, pkg in enumerate(packages):
-        space_left = volume_limit - pkg['total_volume']
-        value_left = max_package_value - pkg['total_value'] if max_package_value > 0 else None
-
-        # Check if item fits both volume and value constraints
-        if space_left >= item['TotalVolume'] and (value_left is None or value_left >= item['TotalValue']):
-            leftover_after = space_left - item['TotalVolume']
-            # Best fit: minimize leftover volume
-            if best_score is None or leftover_after < best_score:
-                best_score = leftover_after
-                best_pkg_idx = i
-
-    if best_pkg_idx is not None:
-        pkg = packages[best_pkg_idx]
-        pkg['types'].append(item)
-        pkg['total_value'] += item['TotalValue']
-        pkg['total_volume'] += item['TotalVolume']
-    else:
-        # No suitable package found, create a new one
+    placed = False
+    for pkg in packages:
+        if pkg['total_volume'] + item['TotalVolume'] <= volume_limit and \
+           (max_package_value == 0 or pkg['total_value'] + item['TotalValue'] <= max_package_value):
+            pkg['types'].append(item)
+            pkg['total_volume'] += item['TotalVolume']
+            pkg['total_value'] += item['TotalValue']
+            placed = True
+            break
+    if not placed:
         packages.append({
             'types': [item],
-            'total_value': item['TotalValue'],
-            'total_volume': item['TotalVolume']
+            'total_volume': item['TotalVolume'],
+            'total_value': item['TotalValue']
         })
+
+# --- Local improvement step (move + swap) ---
+def can_move(item, to_pkg, volume_limit, max_value_limit):
+    vol_after = to_pkg['total_volume'] + item['TotalVolume']
+    val_after = to_pkg['total_value'] + item['TotalValue']
+    if vol_after <= volume_limit and (max_value_limit == 0 or val_after <= max_value_limit):
+        return True
+    return False
+
+def local_improvement(packages, volume_limit, max_value_limit=0, max_iterations=5):
+    improved = True
+    iteration = 0
+
+    while improved and iteration < max_iterations:
+        improved = False
+        iteration += 1
+
+        # Move single items
+        for i in range(len(packages)):
+            for j in range(len(packages)):
+                if i == j:
+                    continue
+                pkg_i = packages[i]
+                pkg_j = packages[j]
+
+                for item_idx, item in enumerate(pkg_i['types']):
+                    if can_move(item, pkg_j, volume_limit, max_value_limit):
+                        leftover_before = (volume_limit - pkg_i['total_volume']) + (volume_limit - pkg_j['total_volume'])
+                        leftover_after = (volume_limit - (pkg_i['total_volume'] - item['TotalVolume'])) + (volume_limit - (pkg_j['total_volume'] + item['TotalVolume']))
+
+                        if leftover_after < leftover_before:
+                            # Move item
+                            pkg_j['types'].append(item)
+                            pkg_j['total_volume'] += item['TotalVolume']
+                            pkg_j['total_value'] += item['TotalValue']
+
+                            del pkg_i['types'][item_idx]
+                            pkg_i['total_volume'] -= item['TotalVolume']
+                            pkg_i['total_value'] -= item['TotalValue']
+
+                            improved = True
+                            break
+                if improved:
+                    break
+            if improved:
+                break
+
+        if improved:
+            continue
+
+        # Try swapping items
+        for i in range(len(packages)):
+            for j in range(i+1, len(packages)):
+                pkg_i = packages[i]
+                pkg_j = packages[j]
+
+                for idx_i, item_i in enumerate(pkg_i['types']):
+                    for idx_j, item_j in enumerate(pkg_j['types']):
+                        vol_i_after = pkg_i['total_volume'] - item_i['TotalVolume'] + item_j['TotalVolume']
+                        vol_j_after = pkg_j['total_volume'] - item_j['TotalVolume'] + item_i['TotalVolume']
+                        val_i_after = pkg_i['total_value'] - item_i['TotalValue'] + item_j['TotalValue']
+                        val_j_after = pkg_j['total_value'] - item_j['TotalValue'] + item_i['TotalValue']
+
+                        if (vol_i_after <= volume_limit and vol_j_after <= volume_limit and
+                            (max_value_limit == 0 or (val_i_after <= max_value_limit and val_j_after <= max_value_limit))):
+
+                            leftover_before = (volume_limit - pkg_i['total_volume']) + (volume_limit - pkg_j['total_volume'])
+                            leftover_after = (volume_limit - vol_i_after) + (volume_limit - vol_j_after)
+
+                            if leftover_after < leftover_before:
+                                # Swap
+                                pkg_i['types'][idx_i], pkg_j['types'][idx_j] = item_j, item_i
+                                pkg_i['total_volume'] = vol_i_after
+                                pkg_j['total_volume'] = vol_j_after
+                                pkg_i['total_value'] = val_i_after
+                                pkg_j['total_value'] = val_j_after
+
+                                improved = True
+                                break
+                    if improved:
+                        break
+                if improved:
+                    break
+            if improved:
+                break
+
+    # Remove empty packages
+    packages[:] = [pkg for pkg in packages if pkg['types']]
     return packages
 
-# 🧠 Add ValueDensity column
-df["ValueDensity"] = df["Value"] / df["Volume"]
+packages = local_improvement(packages, volume_limit, max_package_value, max_iterations=10)
 
-# 📦 Run the multi-objective packer
-packages = pack_items_multi_objective(
-    df,
-    volume_limit,
-    alpha=alpha,
-    beta=beta,
-    max_package_value=max_package_value
-)
-# Consolidation function to group same ship types in a package
+# --- Consolidate package entries ---
 def consolidate_package(package):
     df_pkg = pd.DataFrame(package['types'])
     grouped = df_pkg.groupby('Type').agg({
         'Count': 'sum',
-        'Volume': 'first',  # per-unit volume
-        'Value': 'first'    # per-unit value
+        'Volume': 'first',
+        'Value': 'first'
     }).reset_index()
     grouped['TotalVolume'] = grouped['Count'] * grouped['Volume']
     grouped['TotalValue'] = grouped['Count'] * grouped['Value']
     return grouped
 
-# 🪟 Show results in columns
+# --- Summary and UI output ---
+total_volume = sum(pkg['total_volume'] for pkg in packages)
+total_value = sum(pkg['total_value'] for pkg in packages)
+estimated_packages = len(packages)
+
+st.markdown(f"📦 **Estimated Packages Needed**: {estimated_packages}")
+st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
+st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
+
 left_col, right_col = st.columns([3, 2])
 
 with left_col:
