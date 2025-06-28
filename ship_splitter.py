@@ -1,12 +1,12 @@
-import streamlit as st # type: ignore
+import streamlit as st
 import pandas as pd
 import math
 from io import StringIO
 
 st.title("🚀 EVE Online Ship Splitter")
-st.write("Split your ship inventory into balanced packages based on ISK value and volume.")
+st.write("Split your ship inventory into balanced packages based on volume and ISK value.")
 
-# Configurable volume limit
+# 📦 Volume limit per package (user-configurable)
 volume_limit = st.number_input(
     "📦 Max Volume per Package (m³)",
     min_value=100_000,
@@ -15,7 +15,7 @@ volume_limit = st.number_input(
     step=50_000
 )
 
-# Tab-separated input
+# 📋 Tab-separated ship list input
 default_data = """Type\tCount\tVolume\tValue
 Rook\t16\t10000\t3720706652
 Vulture\t8\t15000\t3695534158
@@ -39,7 +39,7 @@ tsv_input = st.text_area(
     height=300
 )
 
-# Load input
+# Load and validate input
 try:
     df = pd.read_csv(StringIO(tsv_input), sep="\t")
     assert {"Type", "Count", "Volume", "Value"}.issubset(df.columns)
@@ -56,7 +56,6 @@ for _, row in df.iterrows():
     value = float(row["Value"])
     volume = float(row["Volume"])
     ship_type = row["Type"]
-
     max_units = MAX_STACK_VALUE // value
 
     if count * value > MAX_STACK_VALUE and max_units > 0:
@@ -85,72 +84,40 @@ for _, row in df.iterrows():
 
 df = pd.DataFrame(expanded_rows)
 
-
-
 # Derived columns
 df["TotalVolume"] = df["Volume"] * df["Count"]
 df["TotalValue"] = df["Value"] * df["Count"]
 
 total_volume = df["TotalVolume"].sum()
 total_value = df["TotalValue"].sum()
-
 estimated_packages = math.ceil(total_volume / volume_limit)
 
 st.markdown(f"📦 **Estimated Packages Needed**: {estimated_packages}")
 st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
-# Sort and initialize packages
-df = df.sort_values(by="TotalValue", ascending=False).reset_index(drop=True)
-packages = [{'types': [], 'total_value': 0, 'total_volume': 0} for _ in range(estimated_packages)]
+# 🧠 Apply First-Fit Decreasing algorithm
+items = df.sort_values(by="TotalVolume", ascending=False).to_dict(orient="records")
+packages = []
 
-# Packing logic
-for _, row in df.iterrows():
-    count_remaining = row['Count']
-    while count_remaining > 0:
-        placed = False
-        for pkg in sorted(packages, key=lambda p: (p['total_volume'], -p['total_value']))[::-1]:
-            vol_needed = count_remaining * row['Volume']
-            if pkg['total_volume'] + vol_needed <= volume_limit:
-                pkg['types'].append({
-                    'Type': row['Type'],
-                    'Count': count_remaining,
-                    'TotalValue': vol_needed * (row['Value'] / row['Volume']),
-                    'TotalVolume': vol_needed
-                })
-                pkg['total_value'] += count_remaining * row['Value']
-                pkg['total_volume'] += vol_needed
-                count_remaining = 0
-                placed = True
-                break
+for item in items:
+    placed = False
+    for pkg in packages:
+        if pkg['total_volume'] + item['TotalVolume'] <= volume_limit:
+            pkg['types'].append(item)
+            pkg['total_value'] += item['TotalValue']
+            pkg['total_volume'] += item['TotalVolume']
+            placed = True
+            break
 
-        if not placed:
-            best_fit = None
-            for pkg in packages:
-                space_left = volume_limit - pkg['total_volume']
-                max_units = space_left // row['Volume']
-                if max_units > 0:
-                    best_fit = pkg
-                    break
+    if not placed:
+        packages.append({
+            'types': [item],
+            'total_value': item['TotalValue'],
+            'total_volume': item['TotalVolume']
+        })
 
-            if best_fit:
-                best_fit['types'].append({
-                    'Type': row['Type'],
-                    'Count': max_units,
-                    'TotalValue': max_units * row['Value'],
-                    'TotalVolume': max_units * row['Volume']
-                })
-                best_fit['total_value'] += max_units * row['Value']
-                best_fit['total_volume'] += max_units * row['Volume']
-                count_remaining -= max_units
-            else:
-                st.error(f"❌ Cannot fit any units of {row['Type']} due to volume limit.")
-                break
-
-# Display package contents and summary
-summary_rows = []
-
-# Show content and summary side-by-side
+# 📊 Display results in two columns
 left_col, right_col = st.columns([3, 2])
 
 with left_col:
@@ -178,4 +145,3 @@ with right_col:
         "Total Volume (m³)": "{:,.0f}",
         "Total Value (ISK)": "{:,.0f}"
     }))
-
