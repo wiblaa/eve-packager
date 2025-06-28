@@ -5,7 +5,7 @@ from io import StringIO
 
 st.set_page_config(layout="wide")
 st.title("🚀 EVE Online Ship Splitter")
-st.write("Split your ship inventory into balanced packages based on volume, with a hard limit and limited stack splitting.")
+st.write("Split your ship inventory into balanced packages based on volume, with limited stack splitting and consolidated output.")
 
 # 📦 Volume limit per package
 volume_limit = st.number_input(
@@ -118,6 +118,18 @@ for item in items:
             'total_volume': item['TotalVolume']
         })
 
+# Consolidation function to group same ship types in a package
+def consolidate_package(package):
+    df_pkg = pd.DataFrame(package['types'])
+    grouped = df_pkg.groupby('Type').agg({
+        'Count': 'sum',
+        'Volume': 'first',  # per-unit volume
+        'Value': 'first'    # per-unit value
+    }).reset_index()
+    grouped['TotalVolume'] = grouped['Count'] * grouped['Volume']
+    grouped['TotalValue'] = grouped['Count'] * grouped['Value']
+    return grouped
+
 # 🪟 Show results in columns
 left_col, right_col = st.columns([3, 2])
 
@@ -126,20 +138,21 @@ with left_col:
         st.subheader(f"📦 Package {i}")
         st.write(f"**Total Volume**: {package['total_volume']:,} m³")
         st.write(f"**Total Value**: {package['total_value']:,} ISK")
-        contents_df = pd.DataFrame(package['types'])
-        st.dataframe(contents_df)
+
+        consolidated_df = consolidate_package(package)
+        st.dataframe(consolidated_df)
 
 with right_col:
     st.subheader("📊 Summary View")
     summary_rows = []
     for i, package in enumerate(packages, 1):
-        contents_df = pd.DataFrame(package['types'])
+        consolidated_df = consolidate_package(package)
         summary_rows.append({
             "Package": f"Package {i}",
             "Total Volume (m³)": package['total_volume'],
             "Total Value (ISK)": package['total_value'],
-            "Ship Types": len(contents_df),
-            "Total Ships": contents_df["Count"].sum()
+            "Ship Types": len(consolidated_df),
+            "Total Ships": consolidated_df["Count"].sum()
         })
     summary_df = pd.DataFrame(summary_rows)
     st.dataframe(summary_df.style.format({
