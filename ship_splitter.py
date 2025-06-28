@@ -18,12 +18,12 @@ volume_limit = st.sidebar.number_input(
     value=350_000,
     step=50_000
 )
-max_package_value = st.sidebar.number_input(
-    "💰 Max ISK Value per Package",
+max_package_value = st.number_input(
+    "💰 Max Value per Package (ISK, 0 for no limit)",
     min_value=0,
-    value=0,  # 0 means no limit
-    step=100_000_000,
-    format="%d"
+    max_value=100_000_000_000,
+    value=10_000_000_000,
+    step=100_000_000
 )
 # Heuristic weight sliders (0.0 to 1.0), internally scaled
 alpha_ui = st.sidebar.slider("📦 Volume Fit Weight (α)", 0.0, 1.0, 1.0, 0.05)
@@ -130,33 +130,34 @@ def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-9, 
     items = df_expanded.sort_values(by="ValueDensity", ascending=False).to_dict(orient="records")
     packages = []
 
-    for item in items:
-        best_fit_idx = -1
-        best_score = float('inf')
+for item in items:
+    best_pkg_idx = None
+    best_score = None
 
-        for i, pkg in enumerate(packages):
-            space_left = volume_limit - pkg['total_volume']
-            if space_left >= item['TotalVolume']:
-                if max_package_value > 0 and pkg['total_value'] + item['TotalValue'] > max_package_value:
-                    continue  # Skip: would exceed ISK limit
+    for i, pkg in enumerate(packages):
+        space_left = volume_limit - pkg['total_volume']
+        value_left = max_package_value - pkg['total_value'] if max_package_value > 0 else None
 
-                score = alpha * space_left + beta * pkg['total_value']
-                if score < best_score:
-                    best_fit_idx = i
-                    best_score = score
+        # Check if item fits both volume and value constraints
+        if space_left >= item['TotalVolume'] and (value_left is None or value_left >= item['TotalValue']):
+            leftover_after = space_left - item['TotalVolume']
+            # Best fit: minimize leftover volume
+            if best_score is None or leftover_after < best_score:
+                best_score = leftover_after
+                best_pkg_idx = i
 
-        if best_fit_idx == -1:
-            packages.append({
-                'types': [item],
-                'total_value': item['TotalValue'],
-                'total_volume': item['TotalVolume']
-            })
-        else:
-            pkg = packages[best_fit_idx]
-            pkg['types'].append(item)
-            pkg['total_value'] += item['TotalValue']
-            pkg['total_volume'] += item['TotalVolume']
-
+    if best_pkg_idx is not None:
+        pkg = packages[best_pkg_idx]
+        pkg['types'].append(item)
+        pkg['total_value'] += item['TotalValue']
+        pkg['total_volume'] += item['TotalVolume']
+    else:
+        # No suitable package found, create a new one
+        packages.append({
+            'types': [item],
+            'total_value': item['TotalValue'],
+            'total_volume': item['TotalVolume']
+        })
     return packages
 
 # 🧠 Add ValueDensity column
