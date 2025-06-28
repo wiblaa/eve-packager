@@ -97,26 +97,47 @@ st.markdown(f"📦 **Estimated Packages Needed**: {estimated_packages}")
 st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
-# 📦 First-Fit Decreasing (FFD) by TotalVolume
-items = df.sort_values(by="TotalVolume", ascending=False).to_dict(orient="records")
-packages = []
+# 📦 Multi-objective bin packing: prefer tight volume fit + value balancing
+def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-9):
+    """
+    Multi-objective heuristic packing:
+    - alpha: weight for remaining volume (prefer tighter volume fit)
+    - beta: weight for value balancing (prefer lower total ISK value)
+    """
+    items = df_expanded.sort_values(by="ValueDensity", ascending=False).to_dict(orient="records")
+    packages = []
 
-for item in items:
-    placed = False
-    for pkg in packages:
-        if pkg['total_volume'] + item['TotalVolume'] <= volume_limit:
+    for item in items:
+        best_fit_idx = -1
+        best_score = float('inf')
+
+        for i, pkg in enumerate(packages):
+            space_left = volume_limit - pkg['total_volume']
+            if space_left >= item['TotalVolume']:
+                score = alpha * space_left + beta * pkg['total_value']
+                if score < best_score:
+                    best_fit_idx = i
+                    best_score = score
+
+        if best_fit_idx == -1:
+            packages.append({
+                'types': [item],
+                'total_value': item['TotalValue'],
+                'total_volume': item['TotalVolume']
+            })
+        else:
+            pkg = packages[best_fit_idx]
             pkg['types'].append(item)
             pkg['total_value'] += item['TotalValue']
             pkg['total_volume'] += item['TotalVolume']
-            placed = True
-            break
 
-    if not placed:
-        packages.append({
-            'types': [item],
-            'total_value': item['TotalValue'],
-            'total_volume': item['TotalVolume']
-        })
+    return packages
+
+# 🧠 Add ValueDensity column
+df["ValueDensity"] = df["Value"] / df["Volume"]
+
+# 📦 Run the multi-objective packer
+packages = pack_items_multi_objective(df, volume_limit)
 
 # Consolidation function to group same ship types in a package
 def consolidate_package(package):
