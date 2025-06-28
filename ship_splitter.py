@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st # type: ignore
 import pandas as pd
 import math
 from io import StringIO
@@ -46,6 +46,38 @@ try:
 except Exception as e:
     st.error("❌ Could not parse TSV input.")
     st.stop()
+
+# Expand large stacks (split those with total value > 5B ISK)
+MAX_STACK_VALUE = 5_000_000_000
+expanded_rows = []
+
+for _, row in df.iterrows():
+    count = row["Count"]
+    value = row["Value"]
+    volume = row["Volume"]
+    max_units = MAX_STACK_VALUE // value
+
+    if count * value > MAX_STACK_VALUE and max_units > 0:
+        while count > max_units:
+            expanded_rows.append({
+                "Type": row["Type"],
+                "Count": max_units,
+                "Volume": volume,
+                "Value": value
+            })
+            count -= max_units
+        if count > 0:
+            expanded_rows.append({
+                "Type": row["Type"],
+                "Count": count,
+                "Volume": volume,
+                "Value": value
+            })
+    else:
+        expanded_rows.append(row)
+
+df = pd.DataFrame(expanded_rows)
+
 
 # Derived columns
 df["TotalVolume"] = df["Volume"] * df["Count"]
@@ -110,26 +142,32 @@ for _, row in df.iterrows():
 # Display package contents and summary
 summary_rows = []
 
-for i, package in enumerate(packages, 1):
-    st.subheader(f"📦 Package {i}")
-    st.write(f"**Total Volume**: {package['total_volume']:,} m³")
-    st.write(f"**Total Value**: {package['total_value']:,} ISK")
-    contents_df = pd.DataFrame(package['types'])
-    st.dataframe(contents_df)
+# Show content and summary side-by-side
+left_col, right_col = st.columns([3, 2])
 
-    summary_rows.append({
-        "Package": f"Package {i}",
-        "Total Volume (m³)": package['total_volume'],
-        "Total Value (ISK)": package['total_value'],
-        "Ship Types": len(contents_df),
-        "Total Ships": contents_df["Count"].sum()
-    })
+with left_col:
+    for i, package in enumerate(packages, 1):
+        st.subheader(f"📦 Package {i}")
+        st.write(f"**Total Volume**: {package['total_volume']:,} m³")
+        st.write(f"**Total Value**: {package['total_value']:,} ISK")
+        contents_df = pd.DataFrame(package['types'])
+        st.dataframe(contents_df)
 
-# Summary view
-st.markdown("---")
-st.subheader("📊 Summary View")
-summary_df = pd.DataFrame(summary_rows)
-st.dataframe(summary_df.style.format({
-    "Total Volume (m³)": "{:,.0f}",
-    "Total Value (ISK)": "{:,.0f}"
-}))
+with right_col:
+    st.subheader("📊 Summary View")
+    summary_rows = []
+    for i, package in enumerate(packages, 1):
+        contents_df = pd.DataFrame(package['types'])
+        summary_rows.append({
+            "Package": f"Package {i}",
+            "Total Volume (m³)": package['total_volume'],
+            "Total Value (ISK)": package['total_value'],
+            "Ship Types": len(contents_df),
+            "Total Ships": contents_df["Count"].sum()
+        })
+    summary_df = pd.DataFrame(summary_rows)
+    st.dataframe(summary_df.style.format({
+        "Total Volume (m³)": "{:,.0f}",
+        "Total Value (ISK)": "{:,.0f}"
+    }))
+
