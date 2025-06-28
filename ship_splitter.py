@@ -6,7 +6,7 @@ from io import StringIO
 st.title("🚀 EVE Online Ship Splitter")
 st.write("Split your ship inventory into balanced packages based on ISK value and volume.")
 
-# User-configurable constraints
+# Configurable volume limit
 volume_limit = st.number_input(
     "📦 Max Volume per Package (m³)",
     min_value=100_000,
@@ -15,14 +15,7 @@ volume_limit = st.number_input(
     step=50_000
 )
 
-value_limit = st.number_input(
-    "💰 Max Value per Package (ISK)",
-    min_value=1_000_000_000,
-    value=10_000_000_000,
-    step=1_000_000_000
-)
-
-# TSV input
+# Tab-separated input
 default_data = """Type\tCount\tVolume\tValue
 Rook\t16\t10000\t3720706652
 Vulture\t8\t15000\t3695534158
@@ -46,7 +39,7 @@ tsv_input = st.text_area(
     height=300
 )
 
-# Load TSV
+# Load input
 try:
     df = pd.read_csv(StringIO(tsv_input), sep="\t")
     assert {"Type", "Count", "Volume", "Value"}.issubset(df.columns)
@@ -54,43 +47,38 @@ except Exception as e:
     st.error("❌ Could not parse TSV input.")
     st.stop()
 
-# Calculate totals
+# Derived columns
 df["TotalVolume"] = df["Volume"] * df["Count"]
 df["TotalValue"] = df["Value"] * df["Count"]
 
 total_volume = df["TotalVolume"].sum()
 total_value = df["TotalValue"].sum()
 
-estimated_packages = math.ceil(max(
-    total_volume / volume_limit,
-    total_value / value_limit
-))
+estimated_packages = math.ceil(total_volume / volume_limit)
 
 st.markdown(f"📦 **Estimated Packages Needed**: {estimated_packages}")
 st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
-# Sort by total value
+# Sort and initialize packages
 df = df.sort_values(by="TotalValue", ascending=False).reset_index(drop=True)
 packages = [{'types': [], 'total_value': 0, 'total_volume': 0} for _ in range(estimated_packages)]
 
-# Packing logic with dual constraints
+# Packing logic
 for _, row in df.iterrows():
     count_remaining = row['Count']
     while count_remaining > 0:
         placed = False
         for pkg in sorted(packages, key=lambda p: (p['total_value'], len(p['types']))):
             vol_needed = count_remaining * row['Volume']
-            val_needed = count_remaining * row['Value']
-            if (pkg['total_volume'] + vol_needed <= volume_limit and
-                pkg['total_value'] + val_needed <= value_limit):
+            if pkg['total_volume'] + vol_needed <= volume_limit:
                 pkg['types'].append({
                     'Type': row['Type'],
                     'Count': count_remaining,
-                    'TotalValue': val_needed,
+                    'TotalValue': vol_needed * (row['Value'] / row['Volume']),
                     'TotalVolume': vol_needed
                 })
-                pkg['total_value'] += val_needed
+                pkg['total_value'] += count_remaining * row['Value']
                 pkg['total_volume'] += vol_needed
                 count_remaining = 0
                 placed = True
@@ -99,11 +87,8 @@ for _, row in df.iterrows():
         if not placed:
             best_fit = None
             for pkg in packages:
-                vol_space = volume_limit - pkg['total_volume']
-                val_space = value_limit - pkg['total_value']
-                max_units_by_volume = vol_space // row['Volume']
-                max_units_by_value = val_space // row['Value']
-                max_units = min(max_units_by_volume, max_units_by_value)
+                space_left = volume_limit - pkg['total_volume']
+                max_units = space_left // row['Volume']
                 if max_units > 0:
                     best_fit = pkg
                     break
@@ -119,10 +104,10 @@ for _, row in df.iterrows():
                 best_fit['total_volume'] += max_units * row['Volume']
                 count_remaining -= max_units
             else:
-                st.error(f"❌ Cannot fit any units of {row['Type']} due to constraints.")
+                st.error(f"❌ Cannot fit any units of {row['Type']} due to volume limit.")
                 break
 
-# Display packages and summary
+# Display package contents and summary
 summary_rows = []
 
 for i, package in enumerate(packages, 1):
