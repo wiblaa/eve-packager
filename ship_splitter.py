@@ -5,7 +5,7 @@ from io import StringIO
 
 st.set_page_config(layout="wide")
 st.title("🚀 EVE Online Ship Splitter")
-st.write("Split your ship inventory into balanced packages based on volume, with a hard limit and minimal waste.")
+st.write("Split your ship inventory into balanced packages based on volume, with a hard limit and limited stack splitting.")
 
 # 📦 Volume limit per package
 volume_limit = st.number_input(
@@ -48,7 +48,8 @@ except Exception as e:
     st.error("❌ Could not parse TSV input.")
     st.stop()
 
-# 🔪 Split stacks by ISK value (5B) and volume limit (volume_limit)
+# 💥 Split stacks with max 3 splits, respecting volume & value limits
+MAX_SPLITS = 3
 MAX_STACK_VALUE = 5_000_000_000
 expanded_rows = []
 
@@ -60,21 +61,25 @@ for _, row in df.iterrows():
 
     max_units_by_value = MAX_STACK_VALUE // value if value > 0 else count
     max_units_by_volume = volume_limit // volume if volume > 0 else count
-    chunk_size = int(min(max_units_by_value or count, max_units_by_volume or count))
 
-    while count > chunk_size:
+    # Max chunk size by constraints
+    chunk_size_limit = int(min(max_units_by_value or count, max_units_by_volume or count))
+
+    # Calculate needed splits
+    needed_splits = math.ceil(count / chunk_size_limit) if chunk_size_limit > 0 else 1
+
+    # Limit to max 3 splits
+    splits = min(needed_splits, MAX_SPLITS)
+
+    # Evenly distribute counts
+    base_chunk_size = count // splits
+    remainder = count % splits
+
+    for i in range(splits):
+        current_chunk = base_chunk_size + (1 if i < remainder else 0)
         expanded_rows.append({
             "Type": ship_type,
-            "Count": chunk_size,
-            "Volume": volume,
-            "Value": value
-        })
-        count -= chunk_size
-
-    if count > 0:
-        expanded_rows.append({
-            "Type": ship_type,
-            "Count": count,
+            "Count": current_chunk,
             "Volume": volume,
             "Value": value
         })
@@ -92,7 +97,7 @@ st.markdown(f"📦 **Estimated Packages Needed**: {estimated_packages}")
 st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
-# 📦 FFD: sort by decreasing volume
+# 📦 First-Fit Decreasing (FFD) by TotalVolume
 items = df.sort_values(by="TotalVolume", ascending=False).to_dict(orient="records")
 packages = []
 
