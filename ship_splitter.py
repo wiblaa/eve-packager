@@ -26,7 +26,7 @@ for _, r in df.iterrows():
     count = int(r["Count"])
     unit_vol = float(r["Volume"])
     unit_val = float(r["Value"])
-    max_val_per_stack = value_limit / 2 if value_limit > 0 else float("inf")
+    max_val_per_stack = value_limit / 2.5 if value_limit > 0 else float("inf")
 
     # max units per stack due to ISK limit (hard cap per stack)
     max_units_by_isk = math.floor(max_val_per_stack / unit_val)
