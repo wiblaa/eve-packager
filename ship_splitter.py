@@ -109,7 +109,7 @@ for _, row in df.iterrows():
     count_remaining = row['Count']
     while count_remaining > 0:
         placed = False
-        for pkg in sorted(packages, key=lambda p: (p['total_value'], len(p['types']))):
+        for pkg in sorted(packages, key=lambda p: (p['total_volume'], -p['total_value']))[::-1]:
             vol_needed = count_remaining * row['Volume']
             if pkg['total_volume'] + vol_needed <= volume_limit:
                 pkg['types'].append({
