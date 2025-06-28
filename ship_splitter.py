@@ -7,13 +7,34 @@ st.set_page_config(layout="wide")
 st.title("🚀 EVE Online Ship Splitter")
 st.write("Split your ship inventory into balanced packages based on volume, with limited stack splitting and consolidated output.")
 
-# 📦 Volume limit per package
-volume_limit = st.number_input(
+# 🎛️ Sidebar configuration
+st.sidebar.header("⚙️ Packing Settings")
+
+# Max volume per package (already in main area, optional to move here)
+volume_limit = st.sidebar.number_input(
     "📦 Max Volume per Package (m³)",
     min_value=100_000,
     max_value=1_250_000,
     value=350_000,
     step=50_000
+)
+
+# 🧠 Value balance weight (beta): how much to prefer ISK balancing
+value_weight = st.sidebar.slider(
+    "💰 Value Balance Preference (beta)",
+    min_value=0.0,
+    max_value=0.000001,
+    value=0.000000001,
+    step=0.0000000001,
+    format="%.10f"
+)
+
+# 🔪 Max number of stack splits allowed
+max_splits = st.sidebar.slider(
+    "🔪 Max Stack Splits",
+    min_value=1,
+    max_value=10,
+    value=3
 )
 
 # 📋 Input area for TSV
@@ -49,7 +70,7 @@ except Exception as e:
     st.stop()
 
 # 💥 Split stacks with max 3 splits, respecting volume & value limits
-MAX_SPLITS = 3
+MAX_SPLITS = max_splits
 MAX_STACK_VALUE = 5_000_000_000
 expanded_rows = []
 
@@ -98,7 +119,7 @@ st.markdown(f"📊 **Total Volume**: {total_volume:,.0f} m³")
 st.markdown(f"💰 **Total Value**: {total_value:,.0f} ISK")
 
 # 📦 Multi-objective bin packing: prefer tight volume fit + value balancing
-def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-6):
+def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-12):
     """
     Multi-objective heuristic packing:
     - alpha: weight for remaining volume (prefer tighter volume fit)
@@ -137,7 +158,7 @@ def pack_items_multi_objective(df_expanded, volume_limit, alpha=1.0, beta=1e-6):
 df["ValueDensity"] = df["Value"] / df["Volume"]
 
 # 📦 Run the multi-objective packer
-packages = pack_items_multi_objective(df, volume_limit)
+packages = pack_items_multi_objective(df, volume_limit, alpha=1.0, beta=value_weight)
 
 # Consolidation function to group same ship types in a package
 def consolidate_package(package):
